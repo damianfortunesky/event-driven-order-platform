@@ -1,0 +1,7 @@
+graph LR
+  Client --> Order
+  Order --> Kafka
+  Kafka --> Payment
+  Kafka --> Inventory
+  Kafka --> Notification
+  Kafka --> Shipping

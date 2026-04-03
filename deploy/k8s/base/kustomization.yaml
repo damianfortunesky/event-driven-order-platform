@@ -1,0 +1,7 @@
+resources:
+  - namespace.yaml
+  - order-service.yaml
+  - payment-service.yaml
+  - inventory-service.yaml
+  - notification-service.yaml
+  - shipping-service.yaml
