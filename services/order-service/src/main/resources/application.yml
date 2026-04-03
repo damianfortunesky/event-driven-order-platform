@@ -1,14 +1,51 @@
 spring:
   application:
     name: order-service
+  datasource:
+    url: ${ORDER_DB_URL:jdbc:postgresql://localhost:5432/order_db}
+    username: ${ORDER_DB_USERNAME:order_user}
+    password: ${ORDER_DB_PASSWORD:order_pass}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-  datasource:
-    url: ${ORDER_DB_URL}
-    username: ${ORDER_DB_USERNAME}
-    password: ${ORDER_DB_PASSWORD}
+    consumer:
+      group-id: ${ORDER_KAFKA_CONSUMER_GROUP:order-service-group}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      acks: all
+      retries: 3
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+server:
+  port: ${SERVER_PORT:8081}
+
 management:
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
+
+app:
+  kafka:
+    topics:
+      order-created: ${ORDER_CREATED_TOPIC:orders.order-created.v1}
+      payment-processed: ${PAYMENT_PROCESSED_TOPIC:payments.payment-processed.v1}
+      inventory-processed: ${INVENTORY_PROCESSED_TOPIC:inventory.inventory-processed.v1}
+
+logging:
+  pattern:
+    console: '{"timestamp":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"${spring.application.name}","correlationId":"%X{correlationId:-}","thread":"%t","logger":"%c{1}","message":"%m"}%n'
