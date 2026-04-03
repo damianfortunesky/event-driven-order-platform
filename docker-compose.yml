@@ -1,0 +1,220 @@
+version: "3.9"
+
+# Local full stack for event-driven-order-platform.
+# - Kafka runs in KRaft mode (no ZooKeeper).
+# - Includes Kafka UI, per-service Postgres databases, Prometheus and Grafana.
+services:
+  kafka:
+    image: apache/kafka:3.8.1
+    container_name: kafka
+    restart: unless-stopped
+    networks:
+      - platform-net
+    ports:
+      # EXTERNAL listener for tools running on the host (IDE apps, local CLIs)
+      - "${KAFKA_EXTERNAL_PORT:-9092}:19092"
+    environment:
+      # KRaft single-node setup
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
+
+      # Listener model:
+      # - PLAINTEXT://kafka:9092     -> container-to-container traffic
+      # - EXTERNAL://localhost:19092 -> host-to-container traffic (published as :9092)
+      # - CONTROLLER://kafka:9093    -> controller quorum traffic
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_EXTERNAL_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
+      # Sensible local defaults
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_NUM_PARTITIONS: ${KAFKA_DEFAULT_PARTITIONS:-3}
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - platform-net
+    ports:
+      - "${KAFKA_UI_PORT:-8080}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-kraft
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/actuator/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  # Runs once and exits after ensuring all required topics are present.
+  kafka-topics-init:
+    image: apache/kafka:3.8.1
+    container_name: kafka-topics-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - platform-net
+    volumes:
+      - ./infra/kafka/create-topics.sh:/opt/bootstrap/create-topics.sh:ro
+    entrypoint: ["/bin/bash", "/opt/bootstrap/create-topics.sh"]
+    restart: "no"
+
+  postgres-order:
+    image: postgres:16.4
+    container_name: postgres-order
+    restart: unless-stopped
+    networks:
+      - platform-net
+    ports:
+      - "${POSTGRES_ORDER_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_ORDER_DB:-order_db}
+      POSTGRES_USER: ${POSTGRES_ORDER_USER:-order_user}
+      POSTGRES_PASSWORD: ${POSTGRES_ORDER_PASSWORD:-order_pass}
+    volumes:
+      - postgres_order_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ORDER_USER:-order_user} -d ${POSTGRES_ORDER_DB:-order_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres-payment:
+    image: postgres:16.4
+    container_name: postgres-payment
+    restart: unless-stopped
+    networks:
+      - platform-net
+    ports:
+      - "${POSTGRES_PAYMENT_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_PAYMENT_DB:-payment_db}
+      POSTGRES_USER: ${POSTGRES_PAYMENT_USER:-payment_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PAYMENT_PASSWORD:-payment_pass}
+    volumes:
+      - postgres_payment_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_PAYMENT_USER:-payment_user} -d ${POSTGRES_PAYMENT_DB:-payment_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres-inventory:
+    image: postgres:16.4
+    container_name: postgres-inventory
+    restart: unless-stopped
+    networks:
+      - platform-net
+    ports:
+      - "${POSTGRES_INVENTORY_PORT:-5434}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_INVENTORY_DB:-inventory_db}
+      POSTGRES_USER: ${POSTGRES_INVENTORY_USER:-inventory_user}
+      POSTGRES_PASSWORD: ${POSTGRES_INVENTORY_PASSWORD:-inventory_pass}
+    volumes:
+      - postgres_inventory_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_INVENTORY_USER:-inventory_user} -d ${POSTGRES_INVENTORY_DB:-inventory_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres-notification:
+    image: postgres:16.4
+    container_name: postgres-notification
+    restart: unless-stopped
+    networks:
+      - platform-net
+    ports:
+      - "${POSTGRES_NOTIFICATION_PORT:-5435}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_NOTIFICATION_DB:-notification_db}
+      POSTGRES_USER: ${POSTGRES_NOTIFICATION_USER:-notification_user}
+      POSTGRES_PASSWORD: ${POSTGRES_NOTIFICATION_PASSWORD:-notification_pass}
+    volumes:
+      - postgres_notification_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_NOTIFICATION_USER:-notification_user} -d ${POSTGRES_NOTIFICATION_DB:-notification_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    restart: unless-stopped
+    networks:
+      - platform-net
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9090/-/healthy || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:11.1.5
+    container_name: grafana
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      - platform-net
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/api/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+networks:
+  platform-net:
+    name: ${COMPOSE_PROJECT_NAME:-event-driven-order-platform}-net
+    driver: bridge
+
+volumes:
+  kafka_data:
+  postgres_order_data:
+  postgres_payment_data:
+  postgres_inventory_data:
+  postgres_notification_data:
+  prometheus_data:
+  grafana_data:
