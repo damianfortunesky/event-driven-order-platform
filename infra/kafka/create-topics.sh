@@ -11,8 +11,8 @@ TOPICS=(
   payments.payment-rejected.v1
   inventory.inventory-reserved.v1
   inventory.inventory-failed.v1
-  orders.order-completed.v1
-  orders.order-failed.v1
+  orders.order-confirmed.v1
+  orders.order-cancelled.v1
 )
 
 echo "Waiting for Kafka at ${BOOTSTRAP_SERVER}..."
