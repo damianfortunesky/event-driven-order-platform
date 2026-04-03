@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+BOOTSTRAP_SERVER="${BOOTSTRAP_SERVER:-kafka:9092}"
+PARTITIONS="${KAFKA_DEFAULT_PARTITIONS:-3}"
+REPLICATION_FACTOR="${KAFKA_REPLICATION_FACTOR:-1}"
+
 TOPICS=(
   orders.order-created.v1
   payments.payment-approved.v1
@@ -11,8 +15,21 @@ TOPICS=(
   orders.order-failed.v1
 )
 
-for topic in "${TOPICS[@]}"; do
-  docker exec -i $(docker ps --filter name=kafka --format '{{.ID}}' | head -n1) \
-    kafka-topics --bootstrap-server localhost:9092 --create --if-not-exists --topic "$topic" --partitions 3 --replication-factor 1 || true
-  echo "topic ready: $topic"
+echo "Waiting for Kafka at ${BOOTSTRAP_SERVER}..."
+until /opt/kafka/bin/kafka-topics.sh --bootstrap-server "${BOOTSTRAP_SERVER}" --list >/dev/null 2>&1; do
+  sleep 2
 done
+
+echo "Kafka is up. Ensuring topics exist..."
+for topic in "${TOPICS[@]}"; do
+  /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server "${BOOTSTRAP_SERVER}" \
+    --create \
+    --if-not-exists \
+    --topic "${topic}" \
+    --partitions "${PARTITIONS}" \
+    --replication-factor "${REPLICATION_FACTOR}"
+  echo "topic ready: ${topic}"
+done
+
+echo "Done."

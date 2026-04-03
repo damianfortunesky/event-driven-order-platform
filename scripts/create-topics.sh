@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-./infra/kafka/create-topics.sh
+docker compose --env-file .env run --rm kafka-topics-init
