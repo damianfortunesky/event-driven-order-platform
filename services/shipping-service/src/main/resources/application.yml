@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: shipping-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  datasource:
+    url: ${SHIPPING_DB_URL}
+    username: ${SHIPPING_DB_USERNAME}
+    password: ${SHIPPING_DB_PASSWORD}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

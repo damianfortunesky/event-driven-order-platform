@@ -1,0 +1,7 @@
+graph TD
+  Ingress --> OrderSvc
+  OrderSvc --> Kafka
+  PaymentSvc --> Kafka
+  InventorySvc --> Kafka
+  NotificationSvc --> Kafka
+  ShippingSvc --> Kafka

@@ -1,0 +1,16 @@
+sequenceDiagram
+  participant C as Client
+  participant O as order-service
+  participant K as Kafka
+  participant P as payment-service
+  participant I as inventory-service
+  participant N as notification-service
+  C->>O: POST /orders
+  O->>K: OrderCreated
+  K->>P: OrderCreated
+  P->>K: PaymentApproved/Rejected
+  K->>I: PaymentApproved
+  I->>K: InventoryReserved/Failed
+  K->>O: Inventory result
+  O->>K: OrderCompleted/Failed
+  K->>N: OrderCompleted/Failed

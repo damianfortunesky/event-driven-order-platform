@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "order-created.v1.json",
+  "type": "object",
+  "required": ["orderId", "customerId", "currency", "totalAmount", "items", "createdAt"],
+  "properties": {
+    "orderId": {"type": "string"},
+    "customerId": {"type": "string"},
+    "currency": {"type": "string"},
+    "totalAmount": {"type": "number"},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sku", "quantity", "unitPrice"],
+        "properties": {
+          "sku": {"type": "string"},
+          "quantity": {"type": "integer", "minimum": 1},
+          "unitPrice": {"type": "number"}
+        }
+      }
+    },
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

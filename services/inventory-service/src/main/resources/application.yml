@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: inventory-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  datasource:
+    url: ${INVENTORY_DB_URL}
+    username: ${INVENTORY_DB_USERNAME}
+    password: ${INVENTORY_DB_PASSWORD}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
