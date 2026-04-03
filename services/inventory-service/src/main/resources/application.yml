@@ -1,14 +1,49 @@
 spring:
   application:
     name: inventory-service
+  datasource:
+    url: ${INVENTORY_DB_URL:jdbc:postgresql://localhost:5432/inventory_db}
+    username: ${INVENTORY_DB_USERNAME:inventory_user}
+    password: ${INVENTORY_DB_PASSWORD:inventory_pass}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-  datasource:
-    url: ${INVENTORY_DB_URL}
-    username: ${INVENTORY_DB_USERNAME}
-    password: ${INVENTORY_DB_PASSWORD}
+    consumer:
+      group-id: ${INVENTORY_KAFKA_CONSUMER_GROUP:inventory-service-group}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      acks: all
+      retries: 3
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+server:
+  port: ${SERVER_PORT:8083}
+
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info,prometheus,metrics
+
+app:
+  kafka:
+    topics:
+      payment-approved: ${PAYMENT_APPROVED_TOPIC:payments.payment-approved.v1}
+      inventory-reserved: ${INVENTORY_RESERVED_TOPIC:inventory.inventory-reserved.v1}
+      inventory-failed: ${INVENTORY_FAILED_TOPIC:inventory.inventory-failed.v1}
+    consumer:
+      retry:
+        max-attempts: ${INVENTORY_CONSUMER_MAX_ATTEMPTS:4}
+        initial-interval-ms: ${INVENTORY_CONSUMER_INITIAL_INTERVAL_MS:500}
+        multiplier: ${INVENTORY_CONSUMER_RETRY_MULTIPLIER:2.0}
