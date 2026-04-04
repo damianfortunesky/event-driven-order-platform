@@ -1,32 +1,94 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payment-service-config
+  labels:
+    app.kubernetes.io/name: payment-service
+data:
+  SERVER_PORT: "8080"
+  PAYMENT_DB_URL: jdbc:postgresql://postgres.payment.svc.cluster.local:5432/payment_db
+  KAFKA_BOOTSTRAP_SERVERS: kafka.kafka.svc.cluster.local:9092
+  PAYMENT_KAFKA_CONSUMER_GROUP: payment-service-group
+  PAYMENT_APPROVAL_THRESHOLD: "1000"
+  PAYMENT_REJECTION_PERCENTAGE: "5"
+  ORDER_CREATED_TOPIC: orders.order-created.v1
+  PAYMENT_REQUESTED_TOPIC: payments.payment-requested.v1
+  PAYMENT_APPROVED_TOPIC: payments.payment-approved.v1
+  PAYMENT_REJECTED_TOPIC: payments.payment-rejected.v1
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: payment-service-secret
+  labels:
+    app.kubernetes.io/name: payment-service
+type: Opaque
+stringData:
+  PAYMENT_DB_USERNAME: "CHANGE_ME"
+  PAYMENT_DB_PASSWORD: "CHANGE_ME"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: payment-service
-  namespace: eda-platform
+  labels:
+    app.kubernetes.io/name: payment-service
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: payment-service
+      app.kubernetes.io/name: payment-service
   template:
     metadata:
       labels:
-        app: payment-service
+        app.kubernetes.io/name: payment-service
     spec:
       containers:
         - name: payment-service
           image: ghcr.io/example/payment-service:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: payment-service-config
+            - secretRef:
+                name: payment-service-secret
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: payment-service
-  namespace: eda-platform
+  labels:
+    app.kubernetes.io/name: payment-service
 spec:
   selector:
-    app: payment-service
+    app.kubernetes.io/name: payment-service
   ports:
-    - port: 80
-      targetPort: 8080
+    - name: http
+      port: 80
+      targetPort: http

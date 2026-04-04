@@ -1,32 +1,92 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-service-config
+  labels:
+    app.kubernetes.io/name: notification-service
+data:
+  SERVER_PORT: "8080"
+  NOTIFICATION_DB_URL: jdbc:postgresql://postgres.notification.svc.cluster.local:5432/notification_db
+  KAFKA_BOOTSTRAP_SERVERS: kafka.kafka.svc.cluster.local:9092
+  NOTIFICATION_KAFKA_CONSUMER_GROUP: notification-service-group
+  ORDER_CONFIRMED_TOPIC: orders.order-confirmed.v1
+  ORDER_CANCELLED_TOPIC: orders.order-cancelled.v1
+  PAYMENT_REJECTED_TOPIC: payments.payment-rejected.v1
+  INVENTORY_FAILED_TOPIC: inventory.inventory-failed.v1
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notification-service-secret
+  labels:
+    app.kubernetes.io/name: notification-service
+type: Opaque
+stringData:
+  NOTIFICATION_DB_USERNAME: "CHANGE_ME"
+  NOTIFICATION_DB_PASSWORD: "CHANGE_ME"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: notification-service
-  namespace: eda-platform
+  labels:
+    app.kubernetes.io/name: notification-service
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: notification-service
+      app.kubernetes.io/name: notification-service
   template:
     metadata:
       labels:
-        app: notification-service
+        app.kubernetes.io/name: notification-service
     spec:
       containers:
         - name: notification-service
           image: ghcr.io/example/notification-service:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: notification-service-config
+            - secretRef:
+                name: notification-service-secret
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: notification-service
-  namespace: eda-platform
+  labels:
+    app.kubernetes.io/name: notification-service
 spec:
   selector:
-    app: notification-service
+    app.kubernetes.io/name: notification-service
   ports:
-    - port: 80
-      targetPort: 8080
+    - name: http
+      port: 80
+      targetPort: http
