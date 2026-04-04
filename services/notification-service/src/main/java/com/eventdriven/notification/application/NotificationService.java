@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,7 +47,16 @@ public class NotificationService {
     notification.setCorrelationId(event.correlationId());
     notification.setCreatedAt(Instant.now());
 
-    notificationRepository.save(notification);
+    try {
+      notificationRepository.save(notification);
+    } catch (DataIntegrityViolationException ex) {
+      log.info(
+          "notification.event.duplicate.race eventId={} type={} reason=unique_constraint",
+          event.eventId(),
+          event.eventType()
+      );
+      return;
+    }
 
     log.info(
         "notification.sent.simulated channel={} recipient={} orderId={} eventType={} subject={}",
