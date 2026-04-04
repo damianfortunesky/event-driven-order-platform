@@ -5,6 +5,8 @@ import com.eventdriven.payment.infrastructure.kafka.model.EventEnvelope;
 import com.eventdriven.payment.infrastructure.kafka.model.PaymentRequestedPayload;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.Set;
@@ -24,19 +26,38 @@ public class PaymentEventConsumer {
 
   private final ObjectMapper objectMapper;
   private final PaymentProcessingService paymentProcessingService;
+  private final MeterRegistry meterRegistry;
 
   @KafkaListener(
       topics = {"${app.kafka.topics.order-created}", "${app.kafka.topics.payment-requested}"},
       groupId = "${spring.kafka.consumer.group-id}")
   public void onEvent(String message) {
+    Timer.Sample sample = Timer.start(meterRegistry);
+    String eventType = "unknown";
     try {
       EventEnvelope event = parse(message);
+      eventType = event.eventType();
       MDC.put("correlationId", event.correlationId());
+      meterRegistry.counter("eda.events.consumed.total", "event_type", event.eventType()).increment();
       paymentProcessingService.process(event);
+      sample.stop(Timer.builder("eda.event.processing.latency")
+          .tag("event_type", event.eventType())
+          .tag("result", "success")
+          .register(meterRegistry));
     } catch (InvalidPaymentEventException ex) {
+      meterRegistry.counter("eda.events.consume.errors.total", "event_type", eventType, "error", "invalid").increment();
+      sample.stop(Timer.builder("eda.event.processing.latency")
+          .tag("event_type", eventType)
+          .tag("result", "error")
+          .register(meterRegistry));
       log.warn("payment.event.consume.invalid message={} error={}", message, ex.getMessage());
       throw ex;
     } catch (Exception ex) {
+      meterRegistry.counter("eda.events.consume.errors.total", "event_type", eventType, "error", "processing").increment();
+      sample.stop(Timer.builder("eda.event.processing.latency")
+          .tag("event_type", eventType)
+          .tag("result", "error")
+          .register(meterRegistry));
       log.error("payment.event.consume.error message={} error={}", message, ex.getMessage(), ex);
       throw new IllegalStateException("Failed to process incoming payment event", ex);
     } finally {

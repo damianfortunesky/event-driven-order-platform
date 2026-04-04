@@ -1,3 +1,11 @@
 # Dashboards
 
-Colocar aquí dashboards versionados por servicio y por dominio de métricas.
+Dashboards versionados para observabilidad EDA.
+
+## Base
+- `observability/grafana/dashboards/eda-overview.json`:
+  - throughput de eventos consumidos/publicados
+  - errores de consumo
+  - retries
+  - mensajes enviados a DLQ
+  - latencia p95 de procesamiento

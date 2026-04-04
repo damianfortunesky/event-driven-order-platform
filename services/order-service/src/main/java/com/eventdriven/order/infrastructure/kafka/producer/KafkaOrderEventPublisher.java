@@ -5,6 +5,7 @@ import com.eventdriven.order.domain.model.Order;
 import com.eventdriven.order.infrastructure.kafka.dto.OrderCreatedEventPayload;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -21,6 +22,7 @@ public class KafkaOrderEventPublisher implements OrderEventPublisherPort {
 
   private final KafkaTemplate<String, String> kafkaTemplate;
   private final ObjectMapper objectMapper;
+  private final MeterRegistry meterRegistry;
 
   @Value("${app.kafka.topics.order-created}")
   private String orderCreatedTopic;
@@ -46,6 +48,7 @@ public class KafkaOrderEventPublisher implements OrderEventPublisherPort {
     try {
       String message = objectMapper.writeValueAsString(envelope);
       kafkaTemplate.send(orderCreatedTopic, order.id().toString(), message);
+      meterRegistry.counter("eda.events.published.total", "event_type", "OrderCreated", "topic", orderCreatedTopic).increment();
       log.info("kafka.event.published topic={} eventType=OrderCreated orderId={}", orderCreatedTopic, order.id());
     } catch (JsonProcessingException e) {
       throw new IllegalStateException("Error serializing OrderCreated event", e);

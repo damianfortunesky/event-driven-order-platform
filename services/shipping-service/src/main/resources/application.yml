@@ -7,8 +7,30 @@ spring:
     url: ${SHIPPING_DB_URL}
     username: ${SHIPPING_DB_USERNAME}
     password: ${SHIPPING_DB_PASSWORD}
+
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      service: ${spring.application.name}
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: ${spring.application.name}
+    description: Shipping orchestration service.
+    version: 0.1.0-SNAPSHOT
+
+logging:
+  pattern:
+    console: '{"timestamp":"%d{yyyy-MM-dd''T''HH:mm:ss.SSSXXX}","level":"%p","service":"${spring.application.name}","correlationId":"%X{correlationId:-}","thread":"%t","logger":"%c{1}","message":"%m"}%n'
