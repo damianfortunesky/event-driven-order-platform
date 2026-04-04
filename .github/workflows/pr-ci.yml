@@ -1,0 +1,159 @@
+name: PR CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: '21'
+
+jobs:
+  detect-changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      run_contracts: ${{ steps.detect.outputs.run_contracts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed services and contracts
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          head_sha="${{ github.sha }}"
+          changed_files=$(git diff --name-only "$base_sha" "$head_sha")
+
+          services=()
+          for svc in order-service payment-service inventory-service shipping-service notification-service; do
+            if echo "$changed_files" | grep -qE "^services/${svc}/|^pom.xml$|^scripts/|^Makefile$"; then
+              services+=("${svc}")
+            fi
+          done
+
+          if [[ ${#services[@]} -eq 0 ]]; then
+            services=(order-service payment-service inventory-service shipping-service notification-service)
+          fi
+
+          services_json=$(printf '%s\n' "${services[@]}" | jq -R . | jq -s -c .)
+
+          run_contracts=false
+          if echo "$changed_files" | grep -qE '^contracts/'; then
+            run_contracts=true
+          fi
+
+          echo "services=${services_json}" >> "$GITHUB_OUTPUT"
+          echo "run_contracts=${run_contracts}" >> "$GITHUB_OUTPUT"
+
+  build-test:
+    name: Build & test (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Maven verify
+        run: mvn -B -ntp -f services/${{ matrix.service }}/pom.xml verify
+
+      - name: Checkstyle (if configured)
+        shell: bash
+        run: |
+          if [[ -f "config/checkstyle/checkstyle.xml" ]]; then
+            mvn -B -ntp -f services/${{ matrix.service }}/pom.xml checkstyle:check
+          else
+            echo "No central checkstyle config found; skipping strict checkstyle gate."
+          fi
+
+  contracts:
+    name: Validate event contracts
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.run_contracts == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate JSON schemas syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in contracts/schemas/*.json contracts/envelopes/*.json; do
+            jq empty "$f"
+          done
+
+  docker-build-smoke:
+    name: Docker build smoke (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    needs:
+      - build-test
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          push: false
+          tags: local/${{ matrix.service }}:pr-${{ github.event.pull_request.number }}
+
+  quality-gates:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    needs:
+      - build-test
+      - docker-build-smoke
+      - contracts
+    if: always()
+    steps:
+      - name: Enforce required jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in "${{ needs.build-test.result }}" "${{ needs.docker-build-smoke.result }}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "Required job failed: $result"
+              exit 1
+            fi
+          done
+
+          contracts_result="${{ needs.contracts.result }}"
+          if [[ "$contracts_result" != "success" && "$contracts_result" != "skipped" ]]; then
+            echo "Contracts job failed: $contracts_result"
+            exit 1
+          fi
+
+          echo "All PR quality gates passed."
