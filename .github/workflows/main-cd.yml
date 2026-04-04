@@ -1,0 +1,263 @@
+name: Main CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  JAVA_VERSION: '21'
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
+
+concurrency:
+  group: main-cd
+  cancel-in-progress: false
+
+jobs:
+  detect-changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      run_contracts: ${{ steps.detect.outputs.run_contracts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed services and contracts
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            changed_files=$(git ls-files)
+          else
+            before_sha="${{ github.event.before }}"
+            head_sha="${{ github.sha }}"
+            changed_files=$(git diff --name-only "$before_sha" "$head_sha")
+          fi
+
+          services=()
+          for svc in order-service payment-service inventory-service shipping-service notification-service; do
+            if echo "$changed_files" | grep -qE "^services/${svc}/|^pom.xml$|^scripts/|^Makefile$"; then
+              services+=("${svc}")
+            fi
+          done
+
+          if [[ ${#services[@]} -eq 0 ]]; then
+            services=(order-service payment-service inventory-service shipping-service notification-service)
+          fi
+
+          services_json=$(printf '%s\n' "${services[@]}" | jq -R . | jq -s -c .)
+
+          run_contracts=false
+          if echo "$changed_files" | grep -qE '^contracts/'; then
+            run_contracts=true
+          fi
+
+          echo "services=${services_json}" >> "$GITHUB_OUTPUT"
+          echo "run_contracts=${run_contracts}" >> "$GITHUB_OUTPUT"
+
+  build-test:
+    name: Build & test (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Maven verify
+        run: mvn -B -ntp -f services/${{ matrix.service }}/pom.xml verify
+
+      - name: Checkstyle (if configured)
+        shell: bash
+        run: |
+          if [[ -f "config/checkstyle/checkstyle.xml" ]]; then
+            mvn -B -ntp -f services/${{ matrix.service }}/pom.xml checkstyle:check
+          else
+            echo "No central checkstyle config found; skipping strict checkstyle gate."
+          fi
+
+  contracts:
+    name: Validate contracts
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.run_contracts == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate JSON schemas syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in contracts/schemas/*.json contracts/envelopes/*.json; do
+            jq empty "$f"
+          done
+
+  release-and-publish:
+    name: Tag, package and publish
+    runs-on: ubuntu-latest
+    needs:
+      - detect-changes
+      - build-test
+      - contracts
+    if: always() && needs.build-test.result == 'success' && (needs.contracts.result == 'success' || needs.contracts.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    outputs:
+      image_tags_json: ${{ steps.meta.outputs.image_tags_json }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calculate service version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(bash .github/scripts/next_semver.sh "${{ matrix.service }}")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Create git tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ matrix.service }}/v${{ steps.version.outputs.version }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$tag" "${{ github.sha }}"
+          git push origin "$tag"
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}
+          tags: |
+            type=raw,value=v${{ steps.version.outputs.version }}
+            type=sha,format=short
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Export image info artifact
+        shell: bash
+        run: |
+          mkdir -p artifact-images
+          cat > artifact-images/${{ matrix.service }}.txt <<TXT
+          service=${{ matrix.service }}
+          version=v${{ steps.version.outputs.version }}
+          image=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:v${{ steps.version.outputs.version }}
+          commit=${{ github.sha }}
+          TXT
+
+      - name: Upload image metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-metadata-${{ matrix.service }}
+          path: artifact-images/${{ matrix.service }}.txt
+
+  tag-contracts:
+    name: Tag contracts
+    runs-on: ubuntu-latest
+    needs:
+      - detect-changes
+      - contracts
+    if: needs.detect-changes.outputs.run_contracts == 'true' && needs.contracts.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate contracts version
+        id: version
+        run: echo "version=$(bash .github/scripts/next_semver.sh contracts)" >> "$GITHUB_OUTPUT"
+
+      - name: Create contracts tag
+        run: |
+          set -euo pipefail
+          tag="contracts/v${{ steps.version.outputs.version }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$tag" "${{ github.sha }}"
+          git push origin "$tag"
+
+  k8s-artifacts:
+    name: Generate Kubernetes artifacts
+    runs-on: ubuntu-latest
+    needs:
+      - release-and-publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Render overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-k8s
+          for overlay in deploy/k8s/overlays/*; do
+            if [[ -d "$overlay" ]]; then
+              name=$(basename "$overlay")
+              kustomize build "$overlay" > "artifact-k8s/${name}.yaml"
+            fi
+          done
+
+      - name: Upload Kubernetes manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: k8s-manifests-${{ github.sha }}
+          path: artifact-k8s/*.yaml
