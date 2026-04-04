@@ -34,9 +34,9 @@ Tablas gestionadas por Flyway:
 
 ## Estrategia de idempotencia
 1. Se verifica si el `eventId` ya existe en `inventory_inbox_event`.
-2. Se verifica si ya existe una `inventory_reservation` para el `payment_event_id`.
+2. Se verifica si ya existe una `inventory_reservation` para el `payment_event_id` o para el `order_id`.
 3. Si no existe, se procesa en transacción única (bloqueo pesimista de stock + reserva + inbox).
-4. Si llega duplicado, se reutiliza el resultado persistido y se evita duplicar descuento de stock.
+4. Si llega duplicado (mismo `eventId` o mismo `orderId`), se reutiliza el resultado persistido y se evita duplicar descuento de stock.
 
 ## Concurrencia y regla de no stock negativo
 - Lock pesimista (`PESSIMISTIC_WRITE`) al leer filas de `inventory_stock`.

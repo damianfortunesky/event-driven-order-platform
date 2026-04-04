@@ -132,6 +132,47 @@ class PaymentApprovedConsumerIntegrationTest {
     assertThat(stock.getAvailableQuantity()).isEqualTo(8);
   }
 
+  @Test
+  void shouldNotDeductStockTwiceForDifferentEventIdsOfSameOrder() throws Exception {
+    UUID orderId = UUID.randomUUID();
+    String firstMessage = paymentApprovedEvent(
+        UUID.randomUUID(),
+        orderId,
+        "11111111-1111-1111-1111-111111111111",
+        2
+    );
+    String secondMessage = paymentApprovedEvent(
+        UUID.randomUUID(),
+        orderId,
+        "11111111-1111-1111-1111-111111111111",
+        2
+    );
+
+    kafkaTemplate.send("payments.payment-approved.v1", "k1", firstMessage);
+    ConsumerRecord<String, String> first = KafkaTestUtils.getSingleRecord(
+        consumer,
+        "inventory.inventory-reserved.v1",
+        Duration.ofSeconds(10)
+    );
+    assertThat(first.value()).contains("InventoryReserved");
+
+    kafkaTemplate.send("payments.payment-approved.v1", "k1", secondMessage);
+    ConsumerRecord<String, String> second = KafkaTestUtils.getSingleRecord(
+        consumer,
+        "inventory.inventory-reserved.v1",
+        Duration.ofSeconds(10)
+    );
+    assertThat(second.value()).contains("InventoryReserved");
+
+    Thread.sleep(700);
+
+    assertThat(reservationRepository.count()).isEqualTo(1);
+    assertThat(inboxRepository.count()).isEqualTo(2);
+
+    InventoryStockJpaEntity stock = stockRepository.findById(UUID.fromString("11111111-1111-1111-1111-111111111111")).orElseThrow();
+    assertThat(stock.getAvailableQuantity()).isEqualTo(8);
+  }
+
   private void resetStock(String productId, long quantity) {
     InventoryStockJpaEntity stock = stockRepository.findById(UUID.fromString(productId)).orElseThrow();
     stock.setAvailableQuantity(quantity);
