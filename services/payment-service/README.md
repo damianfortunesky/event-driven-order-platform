@@ -1,129 +1,50 @@
 # payment-service
 
-Microservicio Spring Boot 3 (Java 21) para el bounded context **Payment**.
+Servicio del bounded context **Payments** que decide el resultado del pago de una orden.
 
-## Responsabilidad
-- Consumir eventos `OrderCreated` o `PaymentRequested`.
-- Simular procesamiento de pago con reglas reproducibles.
-- Persistir el resultado en PostgreSQL.
+## Objetivo
+
+Procesar de manera determinística los eventos de pago para habilitar o bloquear la continuidad del flujo de orden.
+
+## Responsabilidades
+
+- Consumir `OrderCreated`/`PaymentRequested`.
+- Evaluar reglas de aprobación/rechazo.
+- Persistir resultado de pago.
 - Publicar `PaymentApproved` o `PaymentRejected`.
+- Aplicar idempotencia por `eventId`.
 
-## Reglas de negocio (reproducibles)
-1. **Rechazo por umbral**: si `totalAmount >= app.payment.approval-threshold` se rechaza.
-2. **Rechazo pseudoaleatorio controlado**: si pasa el umbral, se calcula `hash(eventId) % 100`.
-   - Si ese bucket es menor a `app.payment.rejection-percentage`, se rechaza para testing.
-   - Al depender de `eventId`, el resultado es determinista.
+## Reglas de negocio (resumen)
 
-## Idempotencia
-- Se usa `event_id` con restricción `UNIQUE` en tabla `payments`.
-- Ante eventos duplicados se detecta por `eventId` y se ignora reprocesamiento/publicación.
+1. Rechazo por umbral de monto configurable.
+2. Rechazo pseudoaleatorio determinístico para testing controlado.
 
-## Configuración Kafka
-```yaml
-spring:
-  kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    consumer:
-      group-id: ${PAYMENT_KAFKA_CONSUMER_GROUP:payment-service-group}
-      auto-offset-reset: earliest
-    producer:
-      acks: all
-      retries: 3
+## Eventos
 
-app:
-  kafka:
-    topics:
-      order-created: ${ORDER_CREATED_TOPIC:orders.order-created.v1}
-      payment-requested: ${PAYMENT_REQUESTED_TOPIC:payments.payment-requested.v1}
-      payment-approved: ${PAYMENT_APPROVED_TOPIC:payments.payment-approved.v1}
-      payment-rejected: ${PAYMENT_REJECTED_TOPIC:payments.payment-rejected.v1}
-    consumer:
-      dlq-suffix: ${PAYMENT_CONSUMER_DLQ_SUFFIX:.dlq}
-      retry:
-        max-attempts: ${PAYMENT_CONSUMER_MAX_ATTEMPTS:4}
-        initial-interval-ms: ${PAYMENT_CONSUMER_INITIAL_INTERVAL_MS:500}
-        multiplier: ${PAYMENT_CONSUMER_RETRY_MULTIPLIER:2.0}
-```
+### Consume
+- `orders.order-created.v1`
+- `payments.payment-requested.v1` (si se usa etapa intermedia)
 
-## Estrategia de error handling
-- `DefaultErrorHandler` con `ExponentialBackOffWithMaxRetries`.
-- `DeadLetterPublishingRecoverer` publica en `"<topic>${app.kafka.consumer.dlq-suffix}"` cuando agota retries.
-- `InvalidPaymentEventException` se marca como **no-retryable** y va directo a DLQ (payload inválido o `eventType` no soportado).
-- Excepciones transitorias de infraestructura se reintentan con backoff exponencial y luego se derivan a DLQ.
+### Produce
+- `payments.payment-approved.v1`
+- `payments.payment-rejected.v1`
 
-## Observabilidad
-- Logs estructurados JSON (incluye `correlationId`).
-- Métricas Micrometer/Actuator:
-  - `payment.processing.duration` (timer)
-  - `payment.processed.total{status=...}` (counter)
-- Endpoint Prometheus: `/actuator/prometheus`.
+## Operabilidad
 
-## Migraciones Flyway
-- `V1__create_payments_schema.sql`: crea tabla `payments` + índices.
+- Retries con backoff exponencial.
+- Derivación a DLQ al agotar reintentos o ante payload inválido.
+- Métricas de procesamiento para observabilidad.
 
-## Ejecutar local
-```bash
-cd services/payment-service
-mvn spring-boot:run
-```
+## Variables de entorno clave
 
-Variables clave:
 - `KAFKA_BOOTSTRAP_SERVERS`
 - `PAYMENT_DB_URL`
 - `PAYMENT_DB_USERNAME`
 - `PAYMENT_DB_PASSWORD`
 
-## Docker
+## Ejecutar local
+
 ```bash
-docker build -t payment-service:local services/payment-service
-```
-
-## Ejemplos de mensajes
-### Entrada (`OrderCreated`)
-```json
-{
-  "eventId": "24d0b7d8-bf9b-42e5-b43d-1fd9caa4d001",
-  "eventType": "OrderCreated",
-  "occurredAt": "2026-04-03T10:15:30Z",
-  "correlationId": "corr-123",
-  "payload": {
-    "orderId": "b1592c13-25d7-4d95-aaca-8aaf4c4e2e10",
-    "totalAmount": 49.90,
-    "currency": "USD"
-  }
-}
-```
-
-### Salida (`PaymentApproved`)
-```json
-{
-  "eventId": "728ef45d-6aa8-476f-95f3-c5fe20a8f913",
-  "eventType": "PaymentApproved",
-  "occurredAt": "2026-04-03T10:15:31Z",
-  "correlationId": "corr-123",
-  "payload": {
-    "paymentId": "ef89f13e-5e3f-4fd1-8200-0bb606dc6e73",
-    "orderId": "b1592c13-25d7-4d95-aaca-8aaf4c4e2e10",
-    "totalAmount": 49.90,
-    "status": "APPROVED",
-    "reason": null
-  }
-}
-```
-
-### Salida (`PaymentRejected`)
-```json
-{
-  "eventId": "728ef45d-6aa8-476f-95f3-c5fe20a8f914",
-  "eventType": "PaymentRejected",
-  "occurredAt": "2026-04-03T10:15:31Z",
-  "correlationId": "corr-123",
-  "payload": {
-    "paymentId": "ef89f13e-5e3f-4fd1-8200-0bb606dc6e74",
-    "orderId": "b1592c13-25d7-4d95-aaca-8aaf4c4e2e10",
-    "totalAmount": 1200.00,
-    "status": "REJECTED",
-    "reason": "amount_above_threshold"
-  }
-}
+cd services/payment-service
+mvn spring-boot:run
 ```
