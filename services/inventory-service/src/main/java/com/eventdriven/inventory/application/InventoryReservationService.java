@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,7 +53,12 @@ public class InventoryReservationService {
           markInbox(eventEnvelope);
           return toResult(existing, eventEnvelope.correlationId());
         })
-        .orElseGet(() -> processNew(eventEnvelope, payload));
+        .orElseGet(() -> reservationRepository.findByOrderId(payload.orderId())
+            .map(existing -> {
+              markInbox(eventEnvelope);
+              return toResult(existing, eventEnvelope.correlationId());
+            })
+            .orElseGet(() -> processNew(eventEnvelope, payload)));
   }
 
   private ReservationResult processNew(EventEnvelope envelope, PaymentApprovedPayload payload) {
@@ -92,7 +98,15 @@ public class InventoryReservationService {
     reservation.setStatus("RESERVED");
     reservation.setCorrelationId(envelope.correlationId());
     reservation.setCreatedAt(now);
-    reservationRepository.save(reservation);
+    try {
+      reservationRepository.saveAndFlush(reservation);
+    } catch (DataIntegrityViolationException ex) {
+      InventoryReservationJpaEntity existing = reservationRepository.findByPaymentEventId(envelope.eventId())
+          .or(() -> reservationRepository.findByOrderId(payload.orderId()))
+          .orElseThrow(() -> ex);
+      markInbox(envelope);
+      return toResult(existing, envelope.correlationId());
+    }
 
     List<InventoryReservationItemJpaEntity> items = requested.entrySet().stream()
         .map(entry -> {
@@ -158,7 +172,11 @@ public class InventoryReservationService {
     inbox.setEventType(envelope.eventType());
     inbox.setCorrelationId(envelope.correlationId());
     inbox.setProcessedAt(OffsetDateTime.now());
-    inboxEventRepository.save(inbox);
+    try {
+      inboxEventRepository.save(inbox);
+    } catch (DataIntegrityViolationException ignored) {
+      // Duplicate inbox insert is expected when event processing races; reservation row is source of truth.
+    }
   }
 
   private ReservationResult buildResultFromExisting(UUID paymentEventId, UUID orderId, String correlationId) {

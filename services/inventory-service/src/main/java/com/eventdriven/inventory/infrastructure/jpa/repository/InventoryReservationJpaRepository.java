@@ -8,4 +8,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface InventoryReservationJpaRepository extends JpaRepository<InventoryReservationJpaEntity, UUID> {
 
   Optional<InventoryReservationJpaEntity> findByPaymentEventId(UUID paymentEventId);
+
+  Optional<InventoryReservationJpaEntity> findByOrderId(UUID orderId);
 }
