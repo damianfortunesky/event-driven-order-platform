@@ -20,6 +20,7 @@ Microservicio Spring Boot 3 + Java 21 para registrar notificaciones finales del 
 
 ## Idempotencia
 Se implementa deduplicación por par `(source_event_id, source_event_type)` con constraint única en base de datos.
+Además, el servicio captura `DataIntegrityViolationException` para cubrir condiciones de carrera cuando el mismo evento llega en paralelo.
 
 ## Ejemplos de notificaciones generadas
 1. **OrderConfirmed**
@@ -34,6 +35,22 @@ Se implementa deduplicación por par `(source_event_id, source_event_type)` con 
 4. **InventoryFailed**
    - Subject: `Problema con inventario`
    - Body: `No pudimos reservar inventario para la orden ord_10001. Motivo: OUT_OF_STOCK.`
+
+## Ejemplos de eventos de entrada (Kafka JSON)
+```json
+{
+  "eventId": "f57f98c9-6ad8-40af-a272-7ad6d4d72af7",
+  "eventType": "OrderCancelled",
+  "occurredAt": "2026-04-03T10:15:30Z",
+  "correlationId": "corr-001",
+  "payload": {
+    "orderId": "ord_10001",
+    "customerId": "cus_123",
+    "customerEmail": "cliente@example.com",
+    "reasonCode": "PAYMENT_REJECTED"
+  }
+}
+```
 
 ## Ejecutar local
 ```bash
