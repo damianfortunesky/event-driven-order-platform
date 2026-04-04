@@ -38,6 +38,7 @@ app:
       payment-approved: ${PAYMENT_APPROVED_TOPIC:payments.payment-approved.v1}
       payment-rejected: ${PAYMENT_REJECTED_TOPIC:payments.payment-rejected.v1}
     consumer:
+      dlq-suffix: ${PAYMENT_CONSUMER_DLQ_SUFFIX:.dlq}
       retry:
         max-attempts: ${PAYMENT_CONSUMER_MAX_ATTEMPTS:4}
         initial-interval-ms: ${PAYMENT_CONSUMER_INITIAL_INTERVAL_MS:500}
@@ -46,8 +47,9 @@ app:
 
 ## Estrategia de error handling
 - `DefaultErrorHandler` con `ExponentialBackOffWithMaxRetries`.
-- `DeadLetterPublishingRecoverer` publica en `"<topic>.dlq"` cuando agota retries.
-- Cualquier excepción de parseo/procesamiento se propaga para activar retry/DLQ.
+- `DeadLetterPublishingRecoverer` publica en `"<topic>${app.kafka.consumer.dlq-suffix}"` cuando agota retries.
+- `InvalidPaymentEventException` se marca como **no-retryable** y va directo a DLQ (payload inválido o `eventType` no soportado).
+- Excepciones transitorias de infraestructura se reintentan con backoff exponencial y luego se derivan a DLQ.
 
 ## Observabilidad
 - Logs estructurados JSON (incluye `correlationId`).

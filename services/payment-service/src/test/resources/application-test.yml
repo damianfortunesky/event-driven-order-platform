@@ -22,6 +22,7 @@ app:
     rejection-percentage: 0
   kafka:
     consumer:
+      dlq-suffix: .dlq
       retry:
         max-attempts: 2
         initial-interval-ms: 10

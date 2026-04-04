@@ -26,8 +26,10 @@ import org.springframework.test.context.ActiveProfiles;
 @ActiveProfiles("test")
 @EmbeddedKafka(partitions = 1, topics = {
     "orders.order-created.v1",
+    "payments.payment-requested.v1",
     "payments.payment-approved.v1",
-    "payments.payment-rejected.v1"
+    "payments.payment-rejected.v1",
+    "orders.order-created.v1.dlq"
 })
 class PaymentEventConsumerIntegrationTest {
 
@@ -48,7 +50,12 @@ class PaymentEventConsumerIntegrationTest {
     props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
     consumer = new DefaultKafkaConsumerFactory<>(props, new StringDeserializer(), new StringDeserializer())
         .createConsumer();
-    embeddedKafkaBroker.consumeFromAnEmbeddedTopic(consumer, "payments.payment-approved.v1", "payments.payment-rejected.v1");
+    embeddedKafkaBroker.consumeFromAnEmbeddedTopic(
+        consumer,
+        "payments.payment-approved.v1",
+        "payments.payment-rejected.v1",
+        "orders.order-created.v1.dlq"
+    );
   }
 
   @AfterEach
@@ -58,7 +65,7 @@ class PaymentEventConsumerIntegrationTest {
   }
 
   @Test
-  void shouldConsumePersistAndPublishApprovedEvent() {
+  void shouldConsumePersistAndPublishApprovedEventFromOrderCreated() {
     UUID eventId = UUID.randomUUID();
     UUID orderId = UUID.randomUUID();
     String message = """
@@ -93,5 +100,63 @@ class PaymentEventConsumerIntegrationTest {
       Thread.currentThread().interrupt();
     }
     assertThat(paymentRepository.count()).isEqualTo(1);
+  }
+
+  @Test
+  void shouldConsumePaymentRequestedTopic() {
+    UUID eventId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    String message = """
+        {
+          "eventId": "%s",
+          "eventType": "PaymentRequested",
+          "occurredAt": "2026-04-03T10:15:30Z",
+          "correlationId": "corr-int-2",
+          "payload": {
+            "orderId": "%s",
+            "totalAmount": 25.00,
+            "currency": "USD"
+          }
+        }
+        """.formatted(eventId, orderId);
+
+    kafkaTemplate.send("payments.payment-requested.v1", orderId.toString(), message);
+
+    ConsumerRecord<String, String> record = KafkaTestUtils.getSingleRecord(
+        consumer,
+        "payments.payment-approved.v1",
+        Duration.ofSeconds(10)
+    );
+
+    assertThat(record.value()).contains("PaymentApproved");
+    assertThat(paymentRepository.findByEventId(eventId)).isPresent();
+  }
+
+  @Test
+  void shouldSendInvalidEventToDlqWithoutRetries() {
+    String invalidMessage = """
+        {
+          "eventId": "a19d5ec7-3f5b-44d1-95a7-684ce2f4a01a",
+          "eventType": "UnsupportedEvent",
+          "occurredAt": "2026-04-03T10:15:30Z",
+          "correlationId": "corr-int-3",
+          "payload": {
+            "orderId": "11ae1ea5-ecb6-4228-8f7d-3d15fe9fa975",
+            "totalAmount": 25.00,
+            "currency": "USD"
+          }
+        }
+        """;
+
+    kafkaTemplate.send("orders.order-created.v1", "key", invalidMessage);
+
+    ConsumerRecord<String, String> dlqRecord = KafkaTestUtils.getSingleRecord(
+        consumer,
+        "orders.order-created.v1.dlq",
+        Duration.ofSeconds(10)
+    );
+
+    assertThat(dlqRecord.value()).contains("UnsupportedEvent");
+    assertThat(paymentRepository.count()).isZero();
   }
 }

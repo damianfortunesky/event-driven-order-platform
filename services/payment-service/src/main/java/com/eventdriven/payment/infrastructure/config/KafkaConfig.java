@@ -1,9 +1,11 @@
 package com.eventdriven.payment.infrastructure.config;
 
+import com.eventdriven.payment.infrastructure.kafka.consumer.InvalidPaymentEventException;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +37,9 @@ public class KafkaConfig {
   @Value("${app.kafka.consumer.retry.multiplier:2.0}")
   private double multiplier;
 
+  @Value("${app.kafka.consumer.dlq-suffix:.dlq}")
+  private String dlqSuffix;
+
   @Bean
   public ConsumerFactory<String, String> consumerFactory() {
     Map<String, Object> props = kafkaProperties.buildConsumerProperties();
@@ -63,7 +68,7 @@ public class KafkaConfig {
 
     DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
         kafkaTemplate,
-        (record, ex) -> new org.apache.kafka.common.TopicPartition(record.topic() + ".dlq", record.partition())
+        (record, ex) -> new TopicPartition(record.topic() + dlqSuffix, record.partition())
     );
 
     ExponentialBackOffWithMaxRetries backoff = new ExponentialBackOffWithMaxRetries(maxAttempts - 1);
@@ -71,6 +76,7 @@ public class KafkaConfig {
     backoff.setMultiplier(multiplier);
 
     DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backoff);
+    errorHandler.addNotRetryableExceptions(InvalidPaymentEventException.class);
 
     ConcurrentKafkaListenerContainerFactory<String, String> factory =
         new ConcurrentKafkaListenerContainerFactory<>();
