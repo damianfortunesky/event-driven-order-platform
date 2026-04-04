@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: order-service
+          image: ghcr.io/example/order-service:dev
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: payment-service
+          image: ghcr.io/example/payment-service:dev
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: inventory-service
+          image: ghcr.io/example/inventory-service:dev
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: notification-service
+          image: ghcr.io/example/notification-service:dev
