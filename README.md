@@ -34,6 +34,7 @@ Documentación de arquitectura:
 - [C4 model simplificado](docs/c4-model-simplificado.md)
 - [Event Catalog](docs/event-catalog.md)
 - [ADRs principales](docs/adr/README.md)
+- [Playbook de implementación guiada](docs/learning-implementation-playbook.md)
 
 ## Responsabilidades por servicio
 
